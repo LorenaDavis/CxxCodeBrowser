@@ -1,0 +1,175 @@
+Indexer problems:
+
+// The bar ref is marked as a Call:
+foo.bar.method()
+// The final second ref is marked Call:
+thing(thing &other) : second(other.second)
+// The final second ref is marked Other:
+llvm::StringRef StubSizeStr = Comma.second
+// There is no definition/declaration of "second" for std::pair<llvm::StringRef, llvm::StringRef>
+
+-------------------------------------------------------------------------------
+
+A parameter identifier in a function declaration (with no body) is not very
+useful:
+    void func(int foo);
+It probably doesn't need to be syntax-highlighted even.  It *might* make sense
+to cross-reference "foo" with the locations of the corresponding argument in
+every call.  Unless/if that's done, it would make sense to stop including
+parameter symbols in the index.
+
+-------------------------------------------------------------------------------
+
+There's a persistent problem where one location expands to many locations.
+Typically the problem happens with templates, but it can also happen with
+macros:
+    #define INITIALIZE_PASS(passName, arg, name, cfg, analysis) \
+      static void* initialize##passName##PassOnce(PassRegistry &Registry) { \
+        PassInfo *PI = new PassInfo(name, arg, & passName ::ID, \
+          PassInfo::NormalCtor_t(callDefaultCtor< passName >), cfg, analysis); \
+        Registry.registerPass(*PI, true); \
+        return PI; \
+      } \
+      void llvm::initialize##passName##Pass(PassRegistry &Registry) { \
+        CALL_ONCE_INITIALIZATION(initialize##passName##PassOnce) \
+      }
+Right-clicking "Registry" brings up a large context menu because each expansion
+of the INITIALIZE_PASS macro creates a new function, and the function name is
+part of the local variables' USRs.
+
+-------------------------------------------------------------------------------
+
+Experiment with indexing other large projects:
+ * Linux kernel
+ * X.org
+ * Firefox
+ * Chromium
+ * LibreOffice
+
+Make click and right-click do the "right" thing" in the SourceWidget.  I need
+the ability to click on identifiers/lines/characters to navigate.
+
+Improve the indexing:
+ * We need to differentiate between declarations and definitions for functions
+   and structs/classes.
+ * Calls seem to be turned into three xrefs: CallExpr, DeclRefExpr, and
+   UnexposedExpr.  There should be only one.
+ * The definition of a constructor, Foo::Foo, generates three references:
+    - A TypeRef for the first Foo.
+    - A TypeRef and a CXXConstructor for the second Foo.  This second TypeRef
+      reference is inconvenient.
+ * Maybe it'd be nice if each USR had a more user-friendly name?  I'm not sure
+   this really works.  I've noticed that some USRs are extremely long, so they
+   will have to be truncated when displayed.
+ * Maybe we could get kind information on the symbols themselves, not just on
+   the xrefs?
+
+Things need to be sorted:
+ * References in the xref window need to be sorted by either
+   (file, line, column) or by kind.  Right now, sorting by one category leaves
+   the entries in an arbitrary order w.r.t. the other categories.
+ * Right-clicking an identifier shows symbols in arbitrary order, AFAIK.
+
+Show a count of items in the TreeReportWindow.
+
+The TreeReportWindow is frequently too narrow to hold references.  A big part
+of the problem is that a complete path is displayed.  Maybe we can make the
+path shorter like so:
+ - When the path is a child of the project root (e.g. /home/rprichard/llvm),
+   then use a relative path (e.g. include/llvm/Pass.h), but use an absolute
+   path otherwise.
+ - This isn't quite right when there are directories like
+   /home/rprichard/llvm-build that contain auto-generated code.
+ - One fix is to make /home/rprichard the project root.
+ - This is probably the best solution.
+ - A more complicated idea:  Recognize that there are certain "domains"(?) in
+   the filesystem (e.g. /, /usr, /opt, $HOME), and /home/rprichard/llvm and
+   /home/rprichard are in the same $HOME domain, and since $PROJECT_ROOT is
+   /home/rprichard/llvm, use a ../llvm-build relative path to refer to that
+   directory.  Use absolute paths for things like /usr/include/stdio.h.
+
+It'd be nice if the line/column/type columns of the xref window were not
+resizable.
+
+Does #ifdef FOO create a reference to FOO?  I think it should.
+
+Built-in macro definitions ought to be recorded somehow.
+
+The line "#define F(x) G(x)" isn't recording an expansion of G even when F is
+expanded.
+
+Ubiquitous Ctrl-F (source widget and tree report window)
+
+A "grep" feature.
+
+Some way to see the files that *aren't* C/C++ source code.  e.g. build files,
+READMEs, etc.  Maybe use a tree for the files instead of a table?
+
+Syntax highlighting.
+
+BUG: I see some files in the Mozilla index that have .. components in them
+(e.g. mozilla-central/obj-x86_64-unknown-linux-gnu/toolkit/mozapps/update/updater/../../../../xpcom/build/nsVersionComparator.cpp)
+
+-------------------------------------------------------------------------------
+
+Main window improvements:
+
+ * Show the name of the current file.
+
+ * History (Alt-Left / Alt-Right).
+
+ * Allow clicking on symbols.  The user clicks a character.  What happens?
+   Two obvious approaches:
+    - Look for a Ref containing the clicked-on character.  Go to that Ref's
+      single definition.
+       - Problem: there can be multiple Refs on a single character.
+       - Problem: what about multiple definitions?
+    - Look left and right to find a containing identifier, then search for any
+      kind of symbol.
+       - Problem: Consider C++ namespaces.  What if the user clicks on the Bar
+         in "Foo::Bar".  Does the navigator need to understand how :: affects
+         C++ identifiers and lookup "Foo::Bar" or does it look for "Bar"?
+   I think the first approach is the right one.
+
+New commands:
+
+ * Go to file.
+
+ * Go to symbol.
+
+ * Browse all included files.
+
+Indexing / modeling:
+
+ * Figure out how the SourceLocation type works.  I noticed some filenames
+   that were blank, and I noticed that "G" had no Usage reg in the test
+   case:
+      #define G(x) x * 2
+      #define F(x) G(x)
+      int main() {
+         return F(1);
+      }
+   I suspect that preprocessor expansion is affecting things somehow.  I
+   need to understand how the "spelling location" vs other location types
+   works.
+
+ * Deal with the <built-in> file.  Maybe it'd be cool if you could browse
+   to that file somehow?  (Similarly, should the includes and extraargs
+   be displayed for the translation units?)
+
+ * Record the include graph.  What if file A.c includes X.h several times?
+   More typically, A.c and B.c will both include X.h.  What's the best
+   way to show the graph?  There's already a generalized table widget.
+   Should there be a generalized tree widget?
+
+ * Actually parse the C/C++ AST and index more kinds of symbols.  Symbol
+   namespaces are going to become interesting, I think:
+    - preprocessor macros
+    - class/struct/union/enum names
+    - enumerators
+    - C++ namespaces
+
+ * For a Ref, save a starting and ending column rather than just a start
+   column?  (e.g.: Suppose I have a "foobar" field that's referenced inside
+   an expansion of the FOO macro.  The GUI will want to know what to
+   highlight, which is probably just FOO.)

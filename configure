@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
             ARG=$ARG=$1
     esac
     case $ARG in
-        --prefix=*) PREFIX=${ARG#*=}; shift;;
+        --prefix= ) PREFIX=${ARG##=}; shift;;
         --with-clang-dir=*) CLANG_DIR=${ARG#*=}; shift;;
         --with-qmake=*) QMAKE=${ARG#*=}; shift;;
         --with-qmake-spec=*) QMAKESPEC=${ARG#*=}; shift;;
@@ -209,3 +209,4 @@ fi
 echo ""
 echo "SUCCESS: Run make [-j JOBS], then [sudo] make install to build."
 echo ""
+ 

@@ -1,1 +1,2 @@
 ~/project/install/btrace.sh make -j8 all &> BUILD_LOG
+ 
